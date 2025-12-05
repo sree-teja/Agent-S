@@ -6,6 +6,7 @@ from gui_agents.s3.core.engine import (
     LMMEngineAnthropic,
     LMMEngineAzureOpenAI,
     LMMEngineHuggingFace,
+    LMMEngineOllama,
     LMMEngineOpenAI,
     LMMEngineOpenRouter,
     LMMEngineParasail,
@@ -33,6 +34,8 @@ class LMMAgent:
                     self.engine = LMMEngineGemini(**engine_params)
                 elif engine_type == "open_router":
                     self.engine = LMMEngineOpenRouter(**engine_params)
+                elif engine_type == "ollama":
+                    self.engine = LMMEngineOllama(**engine_params)
                 elif engine_type == "parasail":
                     self.engine = LMMEngineParasail(**engine_params)
                 else:
@@ -127,6 +130,7 @@ class LMMAgent:
                 LMMEngineAzureOpenAI,
                 LMMEngineHuggingFace,
                 LMMEngineGemini,
+                LMMEngineOllama,
                 LMMEngineOpenRouter,
                 LMMEngineParasail,
             ),

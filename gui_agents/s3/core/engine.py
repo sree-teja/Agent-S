@@ -1,6 +1,7 @@
 import os
 
 import backoff
+import requests
 from anthropic import Anthropic
 from openai import (
     AzureOpenAI,
@@ -364,6 +365,121 @@ class LMMEnginevLLM(LMMEngine):
             extra_body={"repetition_penalty": repetition_penalty},
         )
         return completion.choices[0].message.content
+
+
+class LMMEngineOllama(LMMEngine):
+    def __init__(
+        self,
+        base_url=None,
+        api_key=None,
+        model=None,
+        rate_limit=-1,
+        temperature=None,
+        **kwargs,
+    ):
+        assert model is not None, "model must be provided"
+        self.model = model
+        self.base_url = base_url or "http://localhost:11434"  # Default Ollama endpoint
+        self.api_key = (
+            api_key  # Ollama doesn't require API key, but keeping for compatibility
+        )
+        self.request_interval = 0 if rate_limit == -1 else 60.0 / rate_limit
+        self.temperature = temperature
+
+    @backoff.on_exception(
+        backoff.expo, (APIConnectionError, APIError, RateLimitError), max_time=60
+    )
+    def generate(self, messages, temperature=0.0, max_new_tokens=None, **kwargs):
+
+        base_url = self.base_url or "http://localhost:11434"
+
+        # Use self.temperature if set, otherwise use the temperature argument
+        temp = self.temperature if self.temperature is not None else temperature
+
+        # Convert messages to Ollama chat format
+        ollama_messages = []
+        for message in messages:
+            if isinstance(message, dict):
+                # Handle both text-only and multimodal messages
+                role = message.get("role", "user")
+                content = message.get("content", "")
+
+                # If content is a list (multimodal), extract text and images
+                if isinstance(content, list):
+                    text_content = ""
+                    images = []
+
+                    for item in content:
+                        if isinstance(item, dict):
+                            if item.get("type") == "text":
+                                text_content += item.get("text", "")
+                            elif item.get("type") == "image_url":
+                                # Extract base64 image from URL if present
+                                image_url = item.get("image_url", {}).get("url", "")
+                                if image_url.startswith("data:image/"):
+                                    # Extract base64 part after the comma
+                                    base64_data = image_url.split(",", 1)[-1]
+                                    images.append(base64_data)
+
+                    ollama_message = {"role": role, "content": text_content}
+                    if images:
+                        ollama_message["images"] = images
+                else:
+                    # Simple text message
+                    ollama_message = {"role": role, "content": str(content)}
+
+                ollama_messages.append(ollama_message)
+
+        # Prepare request data for Ollama chat API with streaming enabled
+        request_data = {
+            "model": self.model,
+            "messages": ollama_messages,
+            "stream": True,  # Enable streaming
+            "options": {"temperature": temp},
+        }
+
+        if max_new_tokens:
+            request_data["options"]["num_predict"] = max_new_tokens
+
+        # Make streaming request to Ollama chat API
+        response = requests.post(
+            f"{base_url}/api/chat",
+            json=request_data,
+            headers={"Content-Type": "application/json"},
+            stream=True,
+        )
+
+        if response.status_code != 200:
+            raise APIError(
+                f"Ollama API error: {response.status_code} - {response.text}"
+            )
+
+        # Process streaming response
+        full_content = ""
+        try:
+            import json
+
+            for line in response.iter_lines():
+                if line:
+                    chunk = json.loads(line.decode("utf-8"))
+
+                    if "message" in chunk and "content" in chunk["message"]:
+                        token = chunk["message"]["content"]
+                        full_content += token
+
+                        # Print token in real-time for visual feedback
+                        print(token, end="", flush=True)
+
+                    # Check if streaming is done
+                    if chunk.get("done", False):
+                        break
+        except Exception as e:
+            raise APIError(f"Error processing streaming response: {e}")
+
+        # Add newline after streaming is complete
+        print()
+
+        return full_content
 
 
 class LMMEngineHuggingFace(LMMEngine):
